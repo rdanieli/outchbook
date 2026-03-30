@@ -117,3 +117,21 @@ public final class ScreamPlaybackEngine: @unchecked Sendable {
         return player
     }
 }
+
+public final class ImpactPlaybackCoordinator: @unchecked Sendable {
+    private let playback: ScreamPlaybackControlling
+    private let onPlaybackFinished: (Bool) -> Void
+
+    public init(
+        playback: ScreamPlaybackControlling,
+        onPlaybackFinished: @escaping (Bool) -> Void
+    ) {
+        self.playback = playback
+        self.onPlaybackFinished = onPlaybackFinished
+    }
+
+    public func handle(_ profile: ImpactProfile) {
+        let didPlay = playback.play(profile)
+        onPlaybackFinished(didPlay)
+    }
+}

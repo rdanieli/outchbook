@@ -12,7 +12,7 @@ public protocol AccelerometerProvider: AnyObject, Sendable {
 }
 
 public protocol SleepMonitor: AnyObject, Sendable {
-    func start(_ handler: @escaping () -> Void)
+    func start(_ handler: @escaping (SleepTriggerEvent) -> Void)
     func stop()
 }
 
@@ -45,8 +45,11 @@ public final class OuchBookCoreController: @unchecked Sendable {
             buffer.append(reading)
         }
 
-        sleepMonitor.start { [coordinator, masterVolumeProvider] in
-            coordinator.handleSleep(masterVolume: masterVolumeProvider())
+        sleepMonitor.start { [coordinator, masterVolumeProvider] event in
+            coordinator.handleSleep(
+                masterVolume: masterVolumeProvider(),
+                closingVelocity: event.closingVelocity
+            )
         }
     }
 

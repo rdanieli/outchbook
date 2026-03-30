@@ -22,16 +22,16 @@ private final class FakeAccelerometerProvider: AccelerometerProvider, @unchecked
 }
 
 private final class FakeSleepMonitor: SleepMonitor, @unchecked Sendable {
-    private var handler: (() -> Void)?
+    private var handler: ((SleepTriggerEvent) -> Void)?
 
-    func start(_ handler: @escaping () -> Void) {
+    func start(_ handler: @escaping (SleepTriggerEvent) -> Void) {
         self.handler = handler
     }
 
     func stop() {}
 
-    func emitSleep() {
-        handler?()
+    func emitSleep(_ event: SleepTriggerEvent = SleepTriggerEvent(source: .systemPower)) {
+        handler?(event)
     }
 }
 
@@ -72,6 +72,7 @@ private final class FakeAudioPlayerFactory: AudioPlayerFactory, @unchecked Senda
 private final class FakePlaybackEngine: ScreamPlaybackControlling, @unchecked Sendable {
     private(set) var preloadedFileNames: [[String]] = []
     private(set) var playedProfiles: [ImpactProfile] = []
+    var nextPlayResult = true
 
     func preload(fileNames: [String]) {
         preloadedFileNames.append(fileNames)
@@ -80,7 +81,7 @@ private final class FakePlaybackEngine: ScreamPlaybackControlling, @unchecked Se
     @discardableResult
     func play(_ profile: ImpactProfile) -> Bool {
         playedProfiles.append(profile)
-        return true
+        return nextPlayResult
     }
 }
 
@@ -165,7 +166,10 @@ private final class FakeLaunchAtLoginManager: LaunchAtLoginManaging, @unchecked 
 @Test func impactProfileMapperChoosesAudioTierAndScalesPlayback() throws {
     let mapper = ImpactProfileMapper(
         softThreshold: 0.8,
-        aggressiveThreshold: 1.8
+        aggressiveThreshold: 1.8,
+        aggressiveVariantSelector: { variants in
+            variants[1]
+        }
     )
 
     let soft = mapper.profile(forPeakMagnitude: 0.5, masterVolume: 0.6)
@@ -182,9 +186,73 @@ private final class FakeLaunchAtLoginManager: LaunchAtLoginManaging, @unchecked 
 
     let aggressive = mapper.profile(forPeakMagnitude: 2.4, masterVolume: 0.6)
     #expect(aggressive.tier == .aggressive)
-    #expect(aggressive.fileName == "ouch-scream.mp3")
+    #expect(aggressive.fileName == "tier3-why-distorted.mp3")
     #expect(aggressive.volume == 0.6)
     #expect(aggressive.pitchMultiplier == 1.35)
+}
+
+@Test func impactProfileMapperUsesClosingVelocityToDifferentiateLidCloseIntensity() throws {
+    let mapper = ImpactProfileMapper(
+        softThreshold: 0.8,
+        aggressiveThreshold: 1.8,
+        aggressiveVariantSelector: { variants in
+            variants[0]
+        }
+    )
+
+    let gentle = mapper.profile(
+        for: ImpactSignal(peakMagnitude: 1.0, closingVelocity: -60),
+        masterVolume: 0.7
+    )
+    #expect(gentle.tier == .gentle)
+    #expect(gentle.fileName == "ow-soft.mp3")
+
+    let normal = mapper.profile(
+        for: ImpactSignal(peakMagnitude: 1.0, closingVelocity: -140),
+        masterVolume: 0.7
+    )
+    #expect(normal.tier == .normal)
+    #expect(normal.fileName == "ow.mp3")
+
+    let aggressive = mapper.profile(
+        for: ImpactSignal(peakMagnitude: 1.0, closingVelocity: -260),
+        masterVolume: 0.7
+    )
+    #expect(aggressive.tier == .aggressive)
+    #expect(aggressive.fileName == "tier3-agony.mp3")
+}
+
+@Test func lidClosureDetectorTriggersWhenLidAngleDropsRapidlyNearClosed() throws {
+    let detector = LidClosureDetector(
+        closeAngleThreshold: 30,
+        reopenAngleThreshold: 70,
+        closingVelocityThreshold: -100
+    )
+
+    #expect(detector.process(angleDegrees: 110, timestamp: 0.0) == nil)
+    #expect(detector.process(angleDegrees: 85, timestamp: 0.1) == nil)
+    let event = detector.process(angleDegrees: 20, timestamp: 0.3)
+    #expect(event?.source == .lidAngle)
+    #expect(event?.closingVelocity == -325.0)
+}
+
+@Test func lidClosureDetectorRequiresReopenBeforeTriggeringAgain() throws {
+    let detector = LidClosureDetector(
+        closeAngleThreshold: 30,
+        reopenAngleThreshold: 70,
+        closingVelocityThreshold: -100
+    )
+
+    #expect(detector.process(angleDegrees: 100, timestamp: 0.0) == nil)
+    #expect(detector.process(angleDegrees: 25, timestamp: 0.3) != nil)
+    #expect(detector.process(angleDegrees: 10, timestamp: 0.4) == nil)
+    #expect(detector.process(angleDegrees: 90, timestamp: 1.0) == nil)
+    #expect(detector.process(angleDegrees: 20, timestamp: 1.3) != nil)
+}
+
+@Test func lidAngleNormalizerSupportsBothWholeDegreeAndCentidegreeSensors() throws {
+    #expect(LidAngleNormalizer.angleDegrees(fromRawValue: 107) == 107.0)
+    #expect(LidAngleNormalizer.angleDegrees(fromRawValue: 10700) == 107.0)
 }
 
 @Test func lidCloseImpactAnalyzerUsesRecentPeakToChooseProfile() throws {
@@ -253,7 +321,7 @@ private final class FakeLaunchAtLoginManager: LaunchAtLoginManaging, @unchecked 
 
     #expect(recorder.profile?.tier == .aggressive)
     #expect(recorder.profile?.volume == 0.4)
-    #expect(recorder.profile?.fileName == "ouch-scream.mp3")
+    #expect(ImpactProfileMapper.aggressiveTierFileNames.contains(recorder.profile?.fileName ?? ""))
 }
 
 @Test func ouchBookCoreControllerMapsSleepEventFromBufferedSamples() throws {
@@ -266,7 +334,10 @@ private final class FakeLaunchAtLoginManager: LaunchAtLoginManaging, @unchecked 
         sleepMonitor: sleepMonitor,
         mapper: ImpactProfileMapper(
             softThreshold: 0.8,
-            aggressiveThreshold: 1.8
+            aggressiveThreshold: 1.8,
+            aggressiveVariantSelector: { variants in
+                variants[3]
+            }
         ),
         masterVolumeProvider: { 0.5 },
         onImpactProfileChosen: { profile in
@@ -281,7 +352,7 @@ private final class FakeLaunchAtLoginManager: LaunchAtLoginManaging, @unchecked 
 
     #expect(recorder.profile?.tier == .aggressive)
     #expect(recorder.profile?.volume == 0.5)
-    #expect(recorder.profile?.fileName == "ouch-scream.mp3")
+    #expect(recorder.profile?.fileName == "tier3-not-again.mp3")
 }
 
 @Test func screamPlaybackEnginePreloadsAndCachesResolvedPlayers() throws {
@@ -315,7 +386,7 @@ private final class FakeLaunchAtLoginManager: LaunchAtLoginManaging, @unchecked 
     let screamURL = URL(fileURLWithPath: "/tmp/ouch-scream.mp3")
     let engine = ScreamPlaybackEngine(
         resourceResolver: { fileName -> URL? in
-            fileName == "ouch-scream.mp3" ? screamURL : nil
+            fileName == "tier3-agony.mp3" ? screamURL : nil
         },
         playerFactory: factory
     )
@@ -323,7 +394,7 @@ private final class FakeLaunchAtLoginManager: LaunchAtLoginManaging, @unchecked 
     let didPlay = engine.play(
         ImpactProfile(
             tier: .aggressive,
-            fileName: "ouch-scream.mp3",
+            fileName: "tier3-agony.mp3",
             volume: 0.75,
             pitchMultiplier: 1.25
         )
@@ -355,24 +426,67 @@ private final class FakeLaunchAtLoginManager: LaunchAtLoginManaging, @unchecked 
     #expect(didPlay == false)
 }
 
+@Test func impactPlaybackCoordinatorPlaysImmediatelyAndReportsResult() throws {
+    let playback = FakePlaybackEngine()
+    playback.nextPlayResult = false
+
+    var reportedResult: Bool?
+    let coordinator = ImpactPlaybackCoordinator(
+        playback: playback,
+        onPlaybackFinished: { didPlay in
+            reportedResult = didPlay
+        }
+    )
+
+    coordinator.handle(
+        ImpactProfile(
+            tier: .aggressive,
+            fileName: "tier3-agony.mp3",
+            volume: 0.8,
+            pitchMultiplier: 1.2
+        )
+    )
+
+    #expect(playback.playedProfiles.count == 1)
+    #expect(playback.playedProfiles.first?.fileName == "tier3-agony.mp3")
+    #expect(reportedResult == false)
+}
+
 @MainActor
 @Test func appStateEnableStartsRuntimeAndPreloadsAudioCatalog() throws {
     let runtime = FakeCoreRuntime()
     let playback = FakePlaybackEngine()
-    let appState = AppState(runtime: runtime, playback: playback)
+    let appState = AppState(
+        runtime: runtime,
+        playback: playback,
+        preferences: InMemoryAppPreferences(),
+        launchAtLoginManager: FakeLaunchAtLoginManager()
+    )
 
     try appState.setEnabled(true)
 
     #expect(appState.isEnabled == true)
     #expect(runtime.startCalls == 1)
-    #expect(playback.preloadedFileNames == [["ow-soft.mp3", "ow.mp3", "ouch-scream.mp3"]])
+    #expect(playback.preloadedFileNames == [[
+        "ow-soft.mp3",
+        "ow.mp3",
+        "tier3-agony.mp3",
+        "tier3-why-distorted.mp3",
+        "tier3-soul-out.mp3",
+        "tier3-not-again.mp3",
+    ]])
 }
 
 @MainActor
 @Test func appStateDisableStopsRuntime() throws {
     let runtime = FakeCoreRuntime()
     let playback = FakePlaybackEngine()
-    let appState = AppState(runtime: runtime, playback: playback)
+    let appState = AppState(
+        runtime: runtime,
+        playback: playback,
+        preferences: InMemoryAppPreferences(),
+        launchAtLoginManager: FakeLaunchAtLoginManager()
+    )
 
     try appState.setEnabled(true)
     try appState.setEnabled(false)
@@ -392,7 +506,9 @@ private final class FakeLaunchAtLoginManager: LaunchAtLoginManaging, @unchecked 
 
     let appState = AppState(
         runtime: runtime,
-        playback: FakePlaybackEngine()
+        playback: FakePlaybackEngine(),
+        preferences: InMemoryAppPreferences(),
+        launchAtLoginManager: FakeLaunchAtLoginManager()
     )
 
     #expect(throws: SampleError.self) {
@@ -512,7 +628,14 @@ private final class FakeLaunchAtLoginManager: LaunchAtLoginManaging, @unchecked 
     appState.restoreIfNeededOnLaunch()
 
     #expect(runtime.startCalls == 1)
-    #expect(playback.preloadedFileNames == [["ow-soft.mp3", "ow.mp3", "ouch-scream.mp3"]])
+    #expect(playback.preloadedFileNames == [[
+        "ow-soft.mp3",
+        "ow.mp3",
+        "tier3-agony.mp3",
+        "tier3-why-distorted.mp3",
+        "tier3-soul-out.mp3",
+        "tier3-not-again.mp3",
+    ]])
     #expect(appState.isEnabled == true)
 }
 

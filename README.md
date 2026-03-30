@@ -6,8 +6,8 @@ The idea is intentionally absurd, but the app is built around a real signal path
 
 - continuously read recent motion data from the laptop accelerometer,
 - keep a rolling 300 ms buffer of those samples,
-- listen for the system sleep event that usually accompanies a lid close,
-- take the peak acceleration from the recent window,
+- observe lid-close motion before the lid is fully shut,
+- combine motion intensity with lid-close speed,
 - map that impact to a pain tier,
 - immediately play a matching scream sound.
 
@@ -15,17 +15,18 @@ The current implementation targets macOS 13+ and is focused on Apple Silicon lap
 
 ## Current Status
 
-This repository already contains a working first version of the app shell and core pipeline:
+This repository already contains a working first version of the app shell, core pipeline, and distribution website:
 
-- macOS menu bar app using `SwiftUI` and `MenuBarExtra`
+- macOS menu bar app with an AppKit `NSStatusItem` shell and SwiftUI content
 - no Dock icon (`LSUIElement`)
 - rolling motion buffer and impact analysis
 - Apple Silicon HID accelerometer backend
-- sleep event listener using `NSWorkspace.willSleepNotification`
+- lid-angle based pre-close trigger path
 - scream tier mapping for gentle, normal, and aggressive closes
 - audio preload and playback via `AVAudioPlayer`
 - persisted settings for enabled state, volume, and launch at login
 - app bundle packaging script
+- static marketing/distribution site in `website/`
 
 This is still an early product build rather than a polished public release. The important architecture is in place, but there are still practical limitations and shipping work left.
 
@@ -35,13 +36,13 @@ When OuchBook is enabled:
 
 1. It starts sampling accelerometer readings from the machine.
 2. It stores only the most recent `300 ms` of readings.
-3. When macOS announces an upcoming sleep event, OuchBook inspects the recent window.
-4. It computes the highest acceleration magnitude in that window.
+3. It watches for a real lid-closing motion before the Mac reaches full closure.
+4. It combines recent motion with lid closing speed.
 5. It maps the result to one of three sound profiles:
    - gentle close -> soft `ow...`
    - normal close -> `OW!`
    - aggressive close -> full scream
-6. It attempts to start playback before sleep fully takes over.
+6. It starts playback as a pre-close effect before sleep fully takes over.
 
 ## Supported Environment
 
@@ -67,11 +68,11 @@ That matters because the accelerometer approach relies on low-level hardware acc
 
 Before treating this as production-ready software, keep these constraints in mind:
 
-- The accelerometer backend currently assumes Apple Silicon hardware.
-- Sleep notification is based on `NSWorkspace.willSleepNotification`, which is a practical lid-close proxy but not a dedicated public "lid closed" API.
+- The current sensor integration is tuned for Apple Silicon MacBooks.
+- The app is designed as a pre-close effect, not a post-sleep playback trick.
 - Hardware access may behave differently across MacBook models and OS releases.
 - The app bundle is ad-hoc signed for local/dev distribution. It is not notarized yet.
-- The bundled scream assets are placeholders and should be replaced with your final MP3 files.
+- The direct-download site is present in-repo, but the final PayPal checkout URL still needs to be set for public launch.
 
 ## Repository Layout
 
@@ -91,7 +92,10 @@ Before treating this as production-ready software, keep these constraints in min
 │   │   └── Resources
 │   │       ├── ow-soft.mp3
 │   │       ├── ow.mp3
-│   │       └── ouch-scream.mp3
+│   │       ├── tier3-agony.mp3
+│   │       ├── tier3-why-distorted.mp3
+│   │       ├── tier3-soul-out.mp3
+│   │       └── tier3-not-again.mp3
 │   └── OuchBookMenuBar
 │       └── OuchBookMenuBarApp.swift
 ├── Support
@@ -101,8 +105,15 @@ Before treating this as production-ready software, keep these constraints in min
 │       └── CoreLogicTests.swift
 ├── scripts
 │   └── build-app.sh
+├── website
+│   ├── index.html
+│   ├── download.html
+│   ├── compatibility.html
+│   ├── paypal-manual-license.html
+│   ├── styles.css
+│   └── assets
 └── dist
-    └── OuchBook.app
+    └── OuchBook.app (generated output)
 ```
 
 ## Architecture Overview
@@ -143,7 +154,7 @@ Responsibilities:
 
 - start and stop live hardware monitoring,
 - route accelerometer readings into the motion buffer,
-- react to sleep events,
+- react to lid-close trigger events,
 - produce the chosen impact profile.
 
 ### 3. macOS integrations
@@ -153,13 +164,13 @@ Key file: `Sources/OuchBook/macOSIntegration.swift`
 This layer contains:
 
 - `AppleSiliconHIDAccelerometerProvider`
-- `WorkspaceSleepMonitor`
+- lid-angle and power-related monitors
 - fallback unsupported provider behavior
 
 Responsibilities:
 
-- connect to the Apple Silicon accelerometer through `IOKit.hid`,
-- register for `NSWorkspace.willSleepNotification`,
+- connect to Apple Silicon HID devices through `IOKit.hid`,
+- read lid-angle data where available,
 - expose runtime availability to the rest of the app.
 
 ### 4. Playback
@@ -191,7 +202,7 @@ Responsibilities:
 - manage launch-at-login preferences,
 - expose human-readable support and error text.
 
-### 6. SwiftUI menu bar app
+### 6. Menu bar app shell
 
 Key file: `Sources/OuchBookMenuBar/OuchBookMenuBarApp.swift`
 
@@ -199,8 +210,26 @@ Responsibilities:
 
 - launch the app as a menu bar utility,
 - hide the Dock icon,
-- render the menu,
+- own the `NSStatusItem` and popover shell,
+- render the menu content,
 - connect the UI to `AppState`.
+
+### 7. Static distribution site
+
+Files:
+
+- `website/index.html`
+- `website/download.html`
+- `website/compatibility.html`
+- `website/paypal-manual-license.html`
+- `website/styles.css`
+
+Responsibilities:
+
+- explain the product clearly,
+- communicate compatibility and macOS limits honestly,
+- document PayPal/manual-license fulfillment,
+- provide install and download guidance for direct distribution.
 
 ## Menu Features
 
@@ -216,11 +245,14 @@ The current menu bar window includes:
 
 ## Audio Assets
 
-OuchBook expects three bundled MP3 files:
+OuchBook expects six bundled MP3 files:
 
 - `ow-soft.mp3`
 - `ow.mp3`
-- `ouch-scream.mp3`
+- `tier3-agony.mp3`
+- `tier3-why-distorted.mp3`
+- `tier3-soul-out.mp3`
+- `tier3-not-again.mp3`
 
 They live in:
 
@@ -240,7 +272,10 @@ Suggested rough target lengths:
 
 - `ow-soft.mp3`: `200-500 ms`
 - `ow.mp3`: `150-400 ms`
-- `ouch-scream.mp3`: `400-1200 ms`
+- `tier3-agony.mp3`: `400-1200 ms`
+- `tier3-why-distorted.mp3`: `400-1200 ms`
+- `tier3-soul-out.mp3`: `400-1200 ms`
+- `tier3-not-again.mp3`: `400-1200 ms`
 
 ## Build and Run
 
@@ -267,6 +302,21 @@ This creates:
 ```text
 dist/OuchBook.app
 ```
+
+## Static Website
+
+The repository also includes a static distribution website in `website/`.
+
+Key pages:
+
+- `website/index.html`
+- `website/download.html`
+- `website/compatibility.html`
+- `website/paypal-manual-license.html`
+
+You can preview it locally by opening `website/index.html` in a browser or serving the folder with any static host.
+
+`dist/` is generated by `scripts/build-app.sh` and should be treated as build output rather than source.
 
 ## Packaging
 
@@ -321,7 +371,7 @@ Main test file:
 
 ### Why not CoreMotion?
 
-CoreMotion is not the path used here because the app is meant to rely on Mac hardware accelerometer data on macOS, which is handled here through the lower-level `SMC` / `IOKit` / `HID` approach instead.
+CoreMotion is not the path used here because the app depends on Mac hardware sensors exposed through lower-level `IOKit` / HID behavior, not the simpler public mobile-style motion APIs.
 
 ### Why direct distribution?
 
@@ -329,15 +379,13 @@ This project is intended for direct distribution because the hardware access mod
 
 ### Why Swift Package Manager?
 
-The repository currently uses SwiftPM for fast iteration, testing, and packaging.
-
-That keeps the codebase lean, but it also means the repo currently uses a handcrafted app-bundle packaging step instead of a full Xcode app project.
+The repository currently uses SwiftPM for fast iteration, testing, packaging, and to keep the app and website in a lightweight single-repo setup.
 
 ## Known Limitations
 
 - Intel support is not implemented yet.
-- The app currently relies on architecture-based backend selection rather than a broader runtime capability probe.
-- The "lid close" detection is approximated through the sleep notification path.
+- Some Apple Silicon sensor behavior still varies by model.
+- The scream is intended as a pre-close effect and can still be cut if the lid reaches forced sleep too quickly.
 - No telemetry, crash reporting, or auto-update system is included yet.
 - No licensing or activation UI is implemented yet, even though the broader product plan includes it.
 - The app has not yet been notarized for public distribution.
@@ -346,13 +394,12 @@ That keeps the codebase lean, but it also means the repo currently uses a handcr
 
 If you plan to turn this into a polished downloadable product, the next practical steps are:
 
-1. Replace placeholder audio assets with final production MP3s.
-2. Test accelerometer behavior across multiple MacBook models.
-3. Verify whether the current sleep callback is early enough on your target machines.
-4. Add final branding assets and app icon.
-5. Add licensing / activation flow for your direct-download distribution model.
-6. Notarize and harden the app for wider release.
-7. Decide whether to keep the SwiftPM packaging flow or migrate to a full Xcode app project.
+1. Finalize the live PayPal checkout link on the website.
+2. Replace any remaining temporary branding assets with final launch branding.
+3. Test lid-close behavior across more Apple Silicon MacBook models.
+4. Add licensing / activation flow for your direct-download distribution model.
+5. Notarize and harden the app for wider release.
+6. Decide whether to keep the SwiftPM packaging flow or migrate to a full Xcode app project later.
 
 ## Verification
 

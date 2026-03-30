@@ -25,8 +25,7 @@ public final class AppState: ObservableObject {
     public static let bundledAudioFileNames = [
         "ow-soft.mp3",
         "ow.mp3",
-        "ouch-scream.mp3",
-    ]
+    ] + ImpactProfileMapper.aggressiveTierFileNames
 
     @Published public private(set) var isEnabled: Bool
     @Published public var masterVolume: Double
@@ -104,6 +103,10 @@ public final class AppState: ObservableObject {
 
     public func handleChosenProfile(_ profile: ImpactProfile) {
         lastPlaybackSucceeded = playback.play(profile)
+    }
+
+    public func recordPlaybackResult(_ succeeded: Bool) {
+        lastPlaybackSucceeded = succeeded
     }
 
     public func restoreIfNeededOnLaunch() {

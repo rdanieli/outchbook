@@ -2,37 +2,81 @@ import AppKit
 import OuchBook
 import SwiftUI
 
+private func makeInstalledResourceBundle() -> Bundle {
+    if
+        let resourceURL = Bundle.main.resourceURL,
+        let packagedBundle = Bundle(url: resourceURL.appendingPathComponent("OuchBook_OuchBook.bundle"))
+    {
+        return packagedBundle
+    }
+
+    return .main
+}
+
 final class OuchBookAppDelegate: NSObject, NSApplicationDelegate {
+    var appState: AppState?
+    var statusBarController: StatusBarController?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        let appState = LiveAppFactory.makeAppState(bundle: makeInstalledResourceBundle())
+        self.appState = appState
+        statusBarController = StatusBarController(appState: appState)
+    }
+}
+
+@MainActor
+final class StatusBarController: NSObject {
+    private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+    private let popover = NSPopover()
+
+    init(appState: AppState) {
+        super.init()
+
+        popover.behavior = .transient
+        popover.animates = false
+        popover.contentSize = NSSize(width: 280, height: 260)
+        popover.contentViewController = NSHostingController(
+            rootView: MenuBarMenuView(appState: appState)
+        )
+
+        if let button = statusItem.button {
+            button.title = "OB"
+            if let image = NSImage(
+                systemSymbolName: "speaker.wave.2.fill",
+                accessibilityDescription: "OuchBook"
+            ) {
+                image.isTemplate = true
+                button.image = image
+            }
+
+            button.target = self
+            button.action = #selector(togglePopover(_:))
+        }
+    }
+
+    @objc private func togglePopover(_ sender: AnyObject?) {
+        guard let button = statusItem.button else {
+            return
+        }
+
+        if popover.isShown {
+            popover.performClose(sender)
+        } else {
+            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+            popover.contentViewController?.view.window?.makeKey()
+        }
     }
 }
 
 @main
 struct OuchBookMenuBarApp: App {
     @NSApplicationDelegateAdaptor(OuchBookAppDelegate.self) private var appDelegate
-    @StateObject private var appState: AppState
-
-    init() {
-        _appState = StateObject(wrappedValue: LiveAppFactory.makeAppState(bundle: Self.resourceBundle))
-    }
-
-    private static var resourceBundle: Bundle {
-        if
-            let resourceURL = Bundle.main.resourceURL,
-            let packagedBundle = Bundle(url: resourceURL.appendingPathComponent("OuchBook_OuchBook.bundle"))
-        {
-            return packagedBundle
-        }
-
-        return .main
-    }
 
     var body: some Scene {
-        MenuBarExtra("OuchBook", systemImage: "speaker.wave.2.fill") {
-            MenuBarMenuView(appState: appState)
+        Settings {
+            EmptyView()
         }
-        .menuBarExtraStyle(.window)
     }
 }
 

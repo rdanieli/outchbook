@@ -12,8 +12,16 @@ public enum LiveAppFactory {
         let provider = DefaultAccelerometerProviderFactory.makeDefault()
         let availability = provider.availability
         let playback = ScreamPlaybackEngine(bundle: bundle)
-        let sleepMonitor = WorkspaceSleepMonitor()
+        let sleepMonitor = LidAngleCloseMonitor()
         let bridge = StateBridge()
+        let playbackCoordinator = ImpactPlaybackCoordinator(
+            playback: playback,
+            onPlaybackFinished: { [bridge] didPlay in
+                Task { @MainActor in
+                    bridge.appState?.recordPlaybackResult(didPlay)
+                }
+            }
+        )
 
         let runtime = OuchBookCoreController(
             provider: provider,
@@ -22,10 +30,8 @@ public enum LiveAppFactory {
             masterVolumeProvider: { [bridge] in
                 bridge.appState?.masterVolume ?? 1.0
             },
-            onImpactProfileChosen: { [bridge] profile in
-                Task { @MainActor in
-                    bridge.appState?.handleChosenProfile(profile)
-                }
+            onImpactProfileChosen: { [playbackCoordinator] profile in
+                playbackCoordinator.handle(profile)
             }
         )
 

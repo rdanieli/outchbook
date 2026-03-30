@@ -61,13 +61,46 @@ public struct ImpactProfile: Equatable, Sendable {
     }
 }
 
+public struct ImpactSignal: Equatable, Sendable {
+    public let peakMagnitude: Double
+    public let closingVelocity: Double?
+
+    public init(peakMagnitude: Double, closingVelocity: Double? = nil) {
+        self.peakMagnitude = peakMagnitude
+        self.closingVelocity = closingVelocity
+    }
+}
+
 public struct ImpactProfileMapper: Sendable {
+    public static let aggressiveTierFileNames = [
+        "tier3-agony.mp3",
+        "tier3-why-distorted.mp3",
+        "tier3-soul-out.mp3",
+        "tier3-not-again.mp3",
+    ]
+
     public let softThreshold: Double
     public let aggressiveThreshold: Double
+    private let aggressiveVariantSelector: @Sendable ([String]) -> String
 
-    public init(softThreshold: Double = 0.8, aggressiveThreshold: Double = 1.8) {
+    public init(
+        softThreshold: Double = 0.8,
+        aggressiveThreshold: Double = 1.8,
+        aggressiveVariantSelector: @escaping @Sendable ([String]) -> String = { variants in
+            variants.randomElement() ?? "tier3-agony.mp3"
+        }
+    ) {
         self.softThreshold = softThreshold
         self.aggressiveThreshold = aggressiveThreshold
+        self.aggressiveVariantSelector = aggressiveVariantSelector
+    }
+
+    public func profile(for signal: ImpactSignal, masterVolume: Double) -> ImpactProfile {
+        if let closingVelocity = signal.closingVelocity {
+            return profile(forClosingVelocity: closingVelocity, masterVolume: masterVolume)
+        }
+
+        return profile(forPeakMagnitude: signal.peakMagnitude, masterVolume: masterVolume)
     }
 
     public func profile(forPeakMagnitude peakMagnitude: Double, masterVolume: Double) -> ImpactProfile {
@@ -93,7 +126,37 @@ public struct ImpactProfileMapper: Sendable {
 
         return ImpactProfile(
             tier: .aggressive,
-            fileName: "ouch-scream.mp3",
+            fileName: aggressiveVariantSelector(Self.aggressiveTierFileNames),
+            volume: clampedVolume(clampedMasterVolume),
+            pitchMultiplier: 1.35
+        )
+    }
+
+    private func profile(forClosingVelocity closingVelocity: Double, masterVolume: Double) -> ImpactProfile {
+        let closingSpeed = abs(closingVelocity)
+        let clampedMasterVolume = min(max(masterVolume, 0), 1)
+
+        if closingSpeed < 80 {
+            return ImpactProfile(
+                tier: .gentle,
+                fileName: "ow-soft.mp3",
+                volume: clampedVolume(0.3 * clampedMasterVolume),
+                pitchMultiplier: 0.95
+            )
+        }
+
+        if closingSpeed < 180 {
+            return ImpactProfile(
+                tier: .normal,
+                fileName: "ow.mp3",
+                volume: clampedVolume(0.6 * clampedMasterVolume),
+                pitchMultiplier: 1.1
+            )
+        }
+
+        return ImpactProfile(
+            tier: .aggressive,
+            fileName: aggressiveVariantSelector(Self.aggressiveTierFileNames),
             volume: clampedVolume(clampedMasterVolume),
             pitchMultiplier: 1.35
         )
@@ -113,8 +176,14 @@ public struct LidCloseImpactAnalyzer: Sendable {
         self.mapper = mapper
     }
 
-    public func profileForLidClose(masterVolume: Double) -> ImpactProfile {
-        mapper.profile(forPeakMagnitude: buffer.peakMagnitude(), masterVolume: masterVolume)
+    public func profileForLidClose(masterVolume: Double, closingVelocity: Double? = nil) -> ImpactProfile {
+        mapper.profile(
+            for: ImpactSignal(
+                peakMagnitude: buffer.peakMagnitude(),
+                closingVelocity: closingVelocity
+            ),
+            masterVolume: masterVolume
+        )
     }
 }
 
@@ -174,7 +243,85 @@ public struct SleepEventCoordinator {
         self.onProfileChosen = onProfileChosen
     }
 
-    public func handleSleep(masterVolume: Double) {
-        onProfileChosen(analyzer.profileForLidClose(masterVolume: masterVolume))
+    public func handleSleep(masterVolume: Double, closingVelocity: Double? = nil) {
+        onProfileChosen(
+            analyzer.profileForLidClose(
+                masterVolume: masterVolume,
+                closingVelocity: closingVelocity
+            )
+        )
+    }
+}
+
+public enum SleepTriggerSource: Equatable, Sendable {
+    case lidAngle
+    case systemPower
+}
+
+public struct SleepTriggerEvent: Equatable, Sendable {
+    public let source: SleepTriggerSource
+    public let closingVelocity: Double?
+
+    public init(source: SleepTriggerSource, closingVelocity: Double? = nil) {
+        self.source = source
+        self.closingVelocity = closingVelocity
+    }
+}
+
+public final class LidClosureDetector: @unchecked Sendable {
+    private let closeAngleThreshold: Double
+    private let reopenAngleThreshold: Double
+    private let closingVelocityThreshold: Double
+
+    private var lastAngle: Double?
+    private var lastTimestamp: TimeInterval?
+    private var isArmed = true
+
+    public init(
+        closeAngleThreshold: Double = 50,
+        reopenAngleThreshold: Double = 85,
+        closingVelocityThreshold: Double = -40
+    ) {
+        self.closeAngleThreshold = closeAngleThreshold
+        self.reopenAngleThreshold = reopenAngleThreshold
+        self.closingVelocityThreshold = closingVelocityThreshold
+    }
+
+    public func process(angleDegrees: Double, timestamp: TimeInterval) -> SleepTriggerEvent? {
+        defer {
+            lastAngle = angleDegrees
+            lastTimestamp = timestamp
+        }
+
+        if angleDegrees >= reopenAngleThreshold {
+            isArmed = true
+        }
+
+        guard
+            isArmed,
+            let lastAngle,
+            let lastTimestamp,
+            timestamp > lastTimestamp
+        else {
+            return nil
+        }
+
+        let velocity = (angleDegrees - lastAngle) / (timestamp - lastTimestamp)
+        guard angleDegrees <= closeAngleThreshold, velocity <= closingVelocityThreshold else {
+            return nil
+        }
+
+        isArmed = false
+        return SleepTriggerEvent(source: .lidAngle, closingVelocity: velocity)
+    }
+}
+
+public enum LidAngleNormalizer {
+    public static func angleDegrees(fromRawValue rawValue: Int) -> Double {
+        if rawValue > 360 {
+            return Double(rawValue) / 100.0
+        }
+
+        return Double(rawValue)
     }
 }

@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>OuchBook compatibility | Supported Macs and caveats</title>
+    <meta
+      name="description"
+      content="Read OuchBook compatibility notes, supported Macs, and the real lid-close caveats that affect how the scream plays on macOS."
+    >
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="site-header-inner">
+        <a class="brand" href="index.html">
+          <span class="brand-mark">OB</span>
+          <span>OuchBook</span>
+        </a>
+        <nav class="site-nav">
+          <a href="index.html">Home</a>
+          <a href="download.html">Download</a>
+          <a href="paypal-manual-license.html">PayPal / License</a>
+        </nav>
+      </div>
+    </header>
+
+    <main class="site-shell">
+      <section class="page-hero">
+        <div class="section-head">
+          <h1>Compatibility and behavior notes</h1>
+          <p>
+            OuchBook is built around Apple Silicon MacBook hardware behavior. It uses real sensor and lid-close
+            data, so model differences matter.
+          </p>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="compatibility-grid">
+          <article>
+            <h3>Best current target</h3>
+            <p>Apple Silicon MacBooks on macOS 13 or newer.</p>
+          </article>
+          <article>
+            <h3>Current non-targets</h3>
+            <p>Intel Macs, desktop Macs, and any machine where the expected lid or motion sensor path is unavailable.</p>
+          </article>
+          <article>
+            <h3>What the app measures</h3>
+            <p>
+              OuchBook uses lid motion and hardware sensor data to estimate close intensity. It is not just a
+              timer that plays a sound after sleep.
+            </p>
+          </article>
+          <article>
+            <h3>Why clips can be cut</h3>
+            <p>
+              Full lid closure causes forced sleep on macOS. Once the machine reaches that point, audio can be
+              interrupted abruptly.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="section-head">
+          <h2>What to expect in practice</h2>
+        </div>
+
+        <div class="grid-2">
+          <article class="page-panel">
+            <h3>Works well</h3>
+            <ul class="list">
+              <li>Pre-close reactions that start while the lid is still moving</li>
+              <li>Short clips with fast attack</li>
+              <li>Tier changes driven by how fast you close the lid</li>
+            </ul>
+          </article>
+          <article class="page-panel">
+            <h3>Not realistic on macOS</h3>
+            <ul class="list">
+              <li>Letting a full long scream continue after the lid is fully shut</li>
+              <li>Relying on post-sleep playback</li>
+              <li>Guaranteeing uninterrupted audio after forced sleep begins</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="callout">
+          OuchBook is intentionally honest: the joke is engineered around the time window <strong>before</strong>
+          full closure, because that is the part macOS still allows the app to win.
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="faq-list">
+          <details class="faq-item">
+            <summary>Why not keep the Mac awake after the lid closes?</summary>
+            <p>
+              That would turn OuchBook into a sleep-management utility instead of a simple menu bar gag app.
+              The first release avoids global power-management tricks.
+            </p>
+          </details>
+          <details class="faq-item">
+            <summary>Will support expand to more Mac models later?</summary>
+            <p>
+              Possibly. The app is structured so hardware-specific integrations can be adapted over time as more
+              machines are tested.
+            </p>
+          </details>
+        </div>
+      </section>
+
+      <footer class="site-footer">
+        <p>Still good with the caveats? The next step is the purchase and install flow.</p>
+        <nav>
+          <a href="index.html">Home</a>
+          <a href="download.html">Download</a>
+          <a href="paypal-manual-license.html">PayPal / License</a>
+        </nav>
+      </footer>
+    </main>
+  </body>
+</html>
